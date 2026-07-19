@@ -134,6 +134,11 @@
     text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 0 12px rgba(255,0,0,0.5);
     margin-top: 4px; white-space: nowrap;
   }
+  .hint-box {
+    background: #1a2332; border: 1px solid #2a4a6f; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 12px; color: #7cb1f2; font-size: 13px;
+  }
+  .hint-box strong { color: #ffb03a; }
 </style>
 <base target="_blank">
 </head>
@@ -190,6 +195,27 @@
         <input type="text" id="ty" placeholder="Y" class="grow" value="0">
         <input type="text" id="tz" placeholder="Z" class="grow" value="500">
       </div>
+
+      <!-- НОВЫЕ НАСТРОЙКИ -->
+      <div class="row" id="cannonSettings">
+        <label>Физика пушки:</label>
+        <div>
+          <div style="font-size:11px;color:#7cb1f2;">Множ. пороха (бл/тик)</div>
+          <input type="text" id="powderMult" placeholder="2.0" style="width:90px" value="2.0" title="1 порох = сколько бл/тик. По умолчанию 2.0 (≈40 м/с)">
+        </div>
+        <div>
+          <div style="font-size:11px;color:#ffb03a;">Режим drag</div>
+          <select id="dragMode" style="width:140px">
+            <option value="modern">Modern (квадратичный)</option>
+            <option value="legacy">Legacy (линейный)</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#50bc54;">Drag коэфф.</div>
+          <input type="text" id="dragCoeff" placeholder="0.001" style="width:80px" value="0.001" title="0.001 для Modern, 0.999 для Legacy">
+        </div>
+      </div>
+
       <div class="row" style="justify-content:center;">
         <button id="calcBtn" class="btn" onclick="getAngles()" disabled>Рассчитать Траекторию</button>
       </div>
@@ -311,15 +337,18 @@
 <script>
 /* ==================== КОНФИГ / СОСТОЯНИЕ ==================== */
 const DEFAULT_CONFIG = {
-  mortar: { base_v: 8.32, slope: 0, drag: 1.0, gravity: -0.05, actual_length: 1.0, tolerance: 2.0 },
+  mortar: { base_v: 8.32, slope: 0, drag: 1.0, gravity: -0.05, actual_length: 1.0, tolerance: 2.0, drag_mode: 'legacy' },
   cannon: {
-    length_2: { base_v: 7.28, slope: 0.0147, drag: 1.0, gravity: -0.05, actual_length: 2.0 },
-    length_4: { base_v: 10.415, slope: 0.0140, drag: 1.0, gravity: -0.05, actual_length: 4.0 },
+    // Новая система: массив калибровок для разных длин
+    calibrations: [
+      { length: 2, base_v: 7.28, slope: 0.0147, powder_mult: 2.0, drag: 0.001, gravity: -0.05, drag_mode: 'modern' },
+      { length: 4, base_v: 10.415, slope: 0.0140, powder_mult: 2.0, drag: 0.001, gravity: -0.05, drag_mode: 'modern' }
+    ],
     tolerance: 2.0
   }
 };
-const LS_CONFIG = 'cbc_html_config';
-const LS_CALIBRATION = 'cbc_html_calibration';
+const LS_CONFIG = 'cbc_html_config_v2';
+const LS_CALIBRATION = 'cbc_html_calibration_v2';
 const LS_CALIB_POINTS = 'cbc_html_calib_points';
 
 let state = {
@@ -346,35 +375,99 @@ function loadCalibration(){
 function saveCalibration(cfg){ localStorage.setItem(LS_CALIBRATION, JSON.stringify(cfg)); }
 function resetCalibration(){ localStorage.removeItem(LS_CALIBRATION); }
 
-function getParams(mode, length){
+function getParams(mode, length, powder){
   const cal = loadCalibration();
   if(mode === 'mortar'){
     return { ...DEFAULT_CONFIG.mortar, ...(cal.mortar || {}) };
   } else {
-    const cfg = { ...DEFAULT_CONFIG.cannon, ...(cal.cannon || {}) };
-    const l2 = { ...DEFAULT_CONFIG.cannon.length_2, ...(cfg.length_2 || {}) };
-    const l4 = { ...DEFAULT_CONFIG.cannon.length_4, ...(cfg.length_4 || {}) };
-    if(length <= 2) return { ...l2 };
-    if(length >= 4) return { ...l4 };
-    const t = (length - 2)/2.0;
-    return {
-      base_v: l2.base_v + (l4.base_v - l2.base_v)*t,
-      slope:  l2.slope  + (l4.slope  - l2.slope )*t,
-      drag: l2.drag || 1.0,
-      gravity: l2.gravity || -0.05,
-      actual_length: length,
-      tolerance: cfg.tolerance || 2.0
-    };
+    // Собираем все доступные калибровки
+    const defaults = DEFAULT_CONFIG.cannon.calibrations;
+    const calCannon = cal.cannon || {};
+    const calList = calCannon.calibrations || [];
+
+    // Объединяем дефолтные и откалиброванные
+    const allCals = [...defaults];
+    for(const c of calList) {
+      const idx = allCals.findIndex(x => Math.abs(x.length - c.length) < 0.5);
+      if(idx >= 0) allCals[idx] = { ...allCals[idx], ...c };
+      else allCals.push(c);
+    }
+    allCals.sort((a,b) => a.length - b.length);
+
+    // Ищем ближайшие точки для интерполяции/экстраполяции
+    let lower = null, upper = null;
+    for(let i=0; i<allCals.length; i++){
+      if(allCals[i].length <= length) lower = allCals[i];
+      if(allCals[i].length >= length && !upper) upper = allCals[i];
+    }
+
+    let result;
+    if(lower && upper && Math.abs(lower.length - upper.length) > 0.5) {
+      // Интерполяция
+      const t = (length - lower.length) / (upper.length - lower.length);
+      result = {
+        base_v: lower.base_v + (upper.base_v - lower.base_v) * t,
+        slope: lower.slope + (upper.slope - lower.slope) * t,
+        powder_mult: (lower.powder_mult != null ? lower.powder_mult : 2.0) + 
+                     ((upper.powder_mult != null ? upper.powder_mult : 2.0) - 
+                      (lower.powder_mult != null ? lower.powder_mult : 2.0)) * t,
+        drag: (lower.drag != null ? lower.drag : 0.001),
+        gravity: lower.gravity || -0.05,
+        actual_length: length,
+        tolerance: (calCannon.tolerance != null ? calCannon.tolerance : DEFAULT_CONFIG.cannon.tolerance),
+        drag_mode: lower.drag_mode || 'modern'
+      };
+    } else if(lower) {
+      // Экстраполяция вверх — ограничиваем рост скорости
+      const extra = length - lower.length;
+      const speedGainPerBlock = 0.3; // Ограничительный коэффициент
+      result = {
+        base_v: lower.base_v + extra * speedGainPerBlock,
+        slope: lower.slope * Math.pow(0.98, extra), // slope немного уменьшается
+        powder_mult: lower.powder_mult != null ? lower.powder_mult : 2.0,
+        drag: lower.drag != null ? lower.drag : 0.001,
+        gravity: lower.gravity || -0.05,
+        actual_length: length,
+        tolerance: (calCannon.tolerance != null ? calCannon.tolerance : DEFAULT_CONFIG.cannon.tolerance),
+        drag_mode: lower.drag_mode || 'modern'
+      };
+    } else if(upper) {
+      // Экстраполяция вниз
+      result = { ...upper, actual_length: length };
+    } else {
+      // Fallback
+      result = { ...defaults[defaults.length-1], actual_length: length };
+    }
+
+    // Учитываем пользовательские настройки из UI
+    const userPowderMult = parseFloat(el('powderMult').value);
+    if(!isNaN(userPowderMult) && userPowderMult > 0) result.powder_mult = userPowderMult;
+
+    const userDrag = parseFloat(el('dragCoeff').value);
+    if(!isNaN(userDrag) && userDrag >= 0) result.drag = userDrag;
+
+    const userDragMode = el('dragMode').value;
+    if(userDragMode) result.drag_mode = userDragMode;
+
+    // УЧЁТ ПОРОХА
+    result.powder = powder || 1;
+
+    return result;
   }
 }
 
 function simulate(pitchDeg, params, cannonY=0, targetY=0, maxTicks=3000){
   const baseV = params.base_v;
   const slope = params.slope || 0;
-  const drag  = params.drag  || 1.0;
-  const grav  = params.gravity || -0.05;
+  const drag = params.drag || 0.001;
+  const grav = params.gravity || -0.05;
   const actLen = params.actual_length || 1.0;
-  const initSpeed = baseV - slope * pitchDeg;
+  const powder = params.powder || 1;
+  const powderMult = params.powder_mult || 2.0;
+  const dragMode = params.drag_mode || 'modern';
+
+  // НОВАЯ ФОРМУЛА СКОРОСТИ: base + порох * множитель - slope * pitch
+  const initSpeed = baseV + powder * powderMult - slope * pitchDeg;
   const rad = pitchDeg * Math.PI / 180;
   const xStart = actLen * Math.cos(rad);
   const yStart = cannonY + Math.sin(rad) * actLen;
@@ -383,6 +476,7 @@ function simulate(pitchDeg, params, cannonY=0, targetY=0, maxTicks=3000){
   let velY = Math.sin(rad) * initSpeed;
   const path = [[0, cannonY], [xStart, yStart]];
   let lastX = posX, lastY = posY, ticks = 0;
+
   while(ticks < maxTicks){
     path.push([posX + xStart, posY]);
     if(ticks > 0 && velY < 0 && posY <= targetY && lastY > targetY){
@@ -395,7 +489,22 @@ function simulate(pitchDeg, params, cannonY=0, targetY=0, maxTicks=3000){
     if(velY < 0 && posY < (targetY - 200)) break;
     lastX = posX; lastY = posY;
     posX += velX; posY += velY;
-    velX *= drag; velY = velY * drag + grav;
+
+    // НОВЫЙ DRAG
+    if(dragMode === 'modern') {
+      // Квадратичный drag: v' = v - v² * drag
+      const speed = Math.sqrt(velX*velX + velY*velY);
+      if(speed > 0.001) {
+        const dragFactor = 1 - speed * drag;
+        velX *= dragFactor;
+        velY *= dragFactor;
+      }
+    } else {
+      // Legacy линейный
+      velX *= drag;
+      velY *= drag;
+    }
+    velY += grav;
     ticks++;
   }
   return { y: posY, ticks, path, reached: false, landingX: posX + xStart };
@@ -440,7 +549,7 @@ function binarySearchPitch(low, high, cannon, target, params){
 }
 
 function BallisticsToTarget(cannon, target, power, length, mode, projectileType){
-  const params = getParams(mode, length);
+  const params = getParams(mode, length, power);
   const tolerance = params.tolerance || 2.0;
   const dx = target[0]-cannon[0], dz = target[2]-cannon[2];
   const distance = Math.sqrt(dx*dx+dz*dz);
@@ -479,7 +588,7 @@ function BallisticsToTarget(cannon, target, power, length, mode, projectileType)
       highSol = {pitch:p2, time:round(t2/20,2), path:path2};
     }
   }
-  const dispSpeed = params.base_v - (params.slope||0)*(uniq[0]||0);
+  const dispSpeed = params.base_v + (params.powder||1)*(params.powder_mult||2.0) - (params.slope||0)*(uniq[0]||0);
   return { yaw, speed:round(dispSpeed,2), low:lowSol, high:highSol, distance, tolerance };
 }
 
@@ -516,17 +625,18 @@ function calibrate(mode, points, length=null){
   let bestErr=Infinity, best=null;
   const realDist = pt=>{ const dx=pt.landing[0]-pt.cannon[0], dz=pt.landing[2]-pt.cannon[2]; return Math.sqrt(dx*dx+dz*dz); };
   const realTime = pt=> pt.airtime??null;
+
   if(mode==='mortar'){
     for(let base_v=5; base_v<=11; base_v+=0.1){
       for(const drag of [1.0,0.9999,0.9995,0.999,0.998,0.995,0.99]){
         for(const gravity of [-0.08,-0.07,-0.06,-0.05,-0.045,-0.04,-0.035,-0.03,-0.025,-0.02]){
           let err=0;
           for(const pt of points){
-            const [sd,st]=simulateDistance(pt.pitch,{base_v,slope:0,drag,gravity,actual_length:1.0},pt.cannon[1],pt.landing[1]);
+            const [sd,st]=simulateDistance(pt.pitch,{base_v,slope:0,drag,gravity,actual_length:1.0,drag_mode:'legacy'},pt.cannon[1],pt.landing[1]);
             let e=(sd-realDist(pt))**2; const t=realTime(pt); if(t!=null) e+=((st/20)-t)**2*100;
             err+=e;
           }
-          if(err<bestErr){ bestErr=err; best={base_v,slope:0,drag,gravity,actual_length:1.0}; }
+          if(err<bestErr){ bestErr=err; best={base_v,slope:0,drag,gravity,actual_length:1.0,drag_mode:'legacy'}; }
         }
       }
     }
@@ -535,7 +645,7 @@ function calibrate(mode, points, length=null){
       for(let base_v=bvC-0.05; base_v<=bvC+0.05; base_v+=0.002){
         let err=0;
         for(const pt of points){
-          const [sd,st]=simulateDistance(pt.pitch,{base_v,slope:0,drag:best.drag,gravity:best.gravity,actual_length:1.0},pt.cannon[1],pt.landing[1]);
+          const [sd,st]=simulateDistance(pt.pitch,{base_v,slope:0,drag:best.drag,gravity:best.gravity,actual_length:1.0,drag_mode:'legacy'},pt.cannon[1],pt.landing[1]);
           let e=(sd-realDist(pt))**2; const t=realTime(pt); if(t!=null) e+=((st/20)-t)**2*100;
           err+=e;
         }
@@ -544,30 +654,46 @@ function calibrate(mode, points, length=null){
     }
   } else {
     const cannonLen = length || (points[0]?.length || 4);
-    for(let base_v=5; base_v<=15; base_v+=0.1){
-      for(let slope=0; slope<=0.025; slope+=0.001){
-        for(const drag of [1.0,0.9995,0.999,0.998,0.995,0.99]){
-          let err=0;
-          for(const pt of points){
-            const [sd,st]=simulateDistance(pt.pitch,{base_v,slope,drag,gravity:-0.05,actual_length:pt.length||cannonLen},pt.cannon[1],pt.landing[1]);
-            let e=(sd-realDist(pt))**2; const t=realTime(pt); if(t!=null) e+=((st/20)-t)**2*100;
-            err+=e;
+    // Перебираем base_v, slope, powder_mult, drag
+    for(let base_v=5; base_v<=20; base_v+=0.5){
+      for(let slope=0; slope<=0.05; slope+=0.002){
+        for(let powder_mult=1.0; powder_mult<=4.0; powder_mult+=0.2){
+          for(let drag=0.0001; drag<=0.005; drag+=0.0002){
+            let err=0;
+            for(const pt of points){
+              const [sd,st]=simulateDistance(pt.pitch,{
+                base_v, slope, powder_mult, drag, gravity:-0.05, 
+                actual_length:pt.length||cannonLen, drag_mode:'modern', powder: pt.power||1
+              },pt.cannon[1],pt.landing[1]);
+              let e=(sd-realDist(pt))**2; const t=realTime(pt); if(t!=null) e+=((st/20)-t)**2*100;
+              err+=e;
+            }
+            if(err<bestErr){ 
+              bestErr=err; 
+              best={base_v,slope,powder_mult,drag,gravity:-0.05,actual_length:cannonLen,drag_mode:'modern'}; 
+            }
           }
-          if(err<bestErr){ bestErr=err; best={base_v,slope,drag,gravity:-0.05,actual_length:cannonLen}; }
         }
       }
     }
     if(best){
-      const bvC=best.base_v, sC=best.slope;
-      for(let base_v=bvC-0.05; base_v<=bvC+0.05; base_v+=0.005){
-        for(let slope=sC-0.001; slope<=sC+0.001; slope+=0.0001){
-          let err=0;
-          for(const pt of points){
-            const [sd,st]=simulateDistance(pt.pitch,{base_v,slope,drag:best.drag,gravity:-0.05,actual_length:pt.length||cannonLen},pt.cannon[1],pt.landing[1]);
-            let e=(sd-realDist(pt))**2; const t=realTime(pt); if(t!=null) e+=((st/20)-t)**2*100;
-            err+=e;
+      const bvC=best.base_v, sC=best.slope, pmC=best.powder_mult, dC=best.drag;
+      for(let base_v=bvC-0.5; base_v<=bvC+0.5; base_v+=0.02){
+        for(let slope=sC-0.002; slope<=sC+0.002; slope+=0.0002){
+          for(let powder_mult=pmC-0.2; powder_mult<=pmC+0.2; powder_mult+=0.02){
+            for(let drag=dC-0.0002; drag<=dC+0.0002; drag+=0.00002){
+              let err=0;
+              for(const pt of points){
+                const [sd,st]=simulateDistance(pt.pitch,{
+                  base_v, slope, powder_mult, drag, gravity:-0.05, 
+                  actual_length:pt.length||cannonLen, drag_mode:'modern', powder: pt.power||1
+                },pt.cannon[1],pt.landing[1]);
+                let e=(sd-realDist(pt))**2; const t=realTime(pt); if(t!=null) e+=((st/20)-t)**2*100;
+                err+=e;
+              }
+              if(err<bestErr){ bestErr=err; best={...best,base_v,slope,powder_mult,drag}; }
+            }
           }
-          if(err<bestErr){ bestErr=err; best={...best,base_v,slope}; }
         }
       }
     }
@@ -578,13 +704,19 @@ function calibrate(mode, points, length=null){
 
 function applyCalibration(mode, params, length=null){
   const cal = loadCalibration();
-  if(mode==='mortar') cal.mortar = params;
-  else {
+  if(mode==='mortar') {
+    cal.mortar = params;
+  } else {
     cal.cannon = cal.cannon || {};
+    cal.cannon.calibrations = cal.cannon.calibrations || [];
     const len = length || params.actual_length || 4;
-    if(len <= 2) cal.cannon.length_2 = params;
-    else if(len >= 4) cal.cannon.length_4 = params;
-    else { cal.cannon.length_2 = params; cal.cannon.length_4 = params; }
+    const idx = cal.cannon.calibrations.findIndex(c => Math.abs(c.length - len) < 0.5);
+    const entry = { length: len, base_v: params.base_v, slope: params.slope, 
+                    powder_mult: params.powder_mult, drag: params.drag, 
+                    gravity: params.gravity, drag_mode: params.drag_mode };
+    if(idx >= 0) cal.cannon.calibrations[idx] = entry;
+    else cal.cannon.calibrations.push(entry);
+    cal.cannon.calibrations.sort((a,b) => a.length - b.length);
   }
   saveCalibration(cal);
 }
@@ -862,7 +994,7 @@ function getAngles(){
     else { el('resHighPitch').textContent='Недоступно'; el('resHighTime').textContent='—'; }
     setStatus(`Траектория построена. Точность ±${res.tolerance} бл.`,'ok');
     saveConfig();
-    const params=getParams(state.currentMode, state.currentMode==='cannon'?barrel:null);
+    const params=getParams(state.currentMode, state.currentMode==='cannon'?barrel:null, powder);
     const [rangeMap,maxDist]=generateRangeMap(cannon[1],target[1],params,state.currentMode);
     state.lastRangeMap=rangeMap; state.lastMaxDist=maxDist;
     state.camSide.initialized=false; state.camTop.initialized=false;
@@ -883,7 +1015,9 @@ function setMode(mode){
 }
 function handleModeSwitch(mode){
   const pf=el('paramsFrame');
+  const cs=el('cannonSettings');
   pf.style.display = (mode==='mortar')?'none':'flex';
+  cs.style.display = (mode==='mortar')?'none':'flex';
   controlButton(); getAngles();
 }
 function toggleRangeOverlay(){
@@ -952,7 +1086,7 @@ function runCalibration(){
       for(const [len,pts] of Object.entries(lengths)){
         const [params,rmse]=calibrate('cannon',pts,parseFloat(len));
         applyCalibration('cannon',params,parseFloat(len));
-        out+=`【Пушка, ствол ${len} бл】\n  base_v = ${params.base_v.toFixed(3)}\n  slope = ${params.slope.toFixed(5)}\n  drag = ${params.drag.toFixed(5)}\n  RMSE = ${rmse.toFixed(2)} блоков\n\n`;
+        out+=`【Пушка, ствол ${len} бл】\n  base_v = ${params.base_v.toFixed(3)}\n  slope = ${params.slope.toFixed(5)}\n  powder_mult = ${params.powder_mult.toFixed(3)}\n  drag = ${params.drag.toFixed(5)}\n  RMSE = ${rmse.toFixed(2)} блоков\n\n`;
       }
     }
     el('calibResults').value=out||'Нет данных.';
@@ -971,7 +1105,8 @@ function saveConfig(){
     cx:el('cx').value, cy:el('cy').value, cz:el('cz').value,
     tx:el('tx').value, ty:el('ty').value, tz:el('tz').value,
     powder:el('powder').value, barrel:el('barrel').value,
-    mode:state.currentMode, projectile:el('projectile').value
+    mode:state.currentMode, projectile:el('projectile').value,
+    powderMult:el('powderMult').value, dragMode:el('dragMode').value, dragCoeff:el('dragCoeff').value
   };
   localStorage.setItem(LS_CONFIG,JSON.stringify(data));
 }
@@ -983,6 +1118,9 @@ function loadConfig(){
     el('tx').value=d.tx||''; el('ty').value=d.ty||''; el('tz').value=d.tz||'';
     el('powder').value=d.powder||''; el('barrel').value=d.barrel||'';
     if(d.projectile) el('projectile').value=d.projectile;
+    if(d.powderMult) el('powderMult').value=d.powderMult;
+    if(d.dragMode) el('dragMode').value=d.dragMode;
+    if(d.dragCoeff) el('dragCoeff').value=d.dragCoeff;
     if(d.mode){ state.currentMode=d.mode; el('btnCannon').classList.toggle('active',d.mode==='cannon'); el('btnMortar').classList.toggle('active',d.mode==='mortar'); }
   }catch{}
 }
@@ -1022,9 +1160,10 @@ window.addEventListener('resize',resizeCanvases);
 /* ==================== INIT ==================== */
 function init(){
   loadConfig(); loadCalibPoints(); updateCalibList();
-  ['cx','cy','cz','tx','ty','tz','powder','barrel'].forEach(id=>{
+  ['cx','cy','cz','tx','ty','tz','powder','barrel','powderMult','dragCoeff'].forEach(id=>{
     el(id).addEventListener('input',()=>{ validateFloat(el(id)); controlButton(); getAngles(); });
   });
+  el('dragMode').addEventListener('change', ()=>{ getAngles(); });
   bindCanvas(el('canvasSide'),state.camSide);
   bindCanvas(el('canvasTop'),state.camTop,true);
   // Default range overlay button state
