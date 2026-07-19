@@ -135,9 +135,9 @@
     <div class="panel">
       <div class="row">
         <label>Позиция Орудия (X;Y;Z):</label>
-        <input type="text" id="cx" placeholder="X" class="grow">
-        <input type="text" id="cy" placeholder="Y" class="grow">
-        <input type="text" id="cz" placeholder="Z" class="grow">
+        <input type="text" id="cx" placeholder="X" class="grow" value="0">
+        <input type="text" id="cy" placeholder="Y" class="grow" value="0">
+        <input type="text" id="cz" placeholder="Z" class="grow" value="0">
       </div>
       <div class="row">
         <label>Тип Орудия:</label>
@@ -159,9 +159,9 @@
       </div>
       <div class="row">
         <label>Позиция Цели (X;Y;Z):</label>
-        <input type="text" id="tx" placeholder="X" class="grow">
-        <input type="text" id="ty" placeholder="Y" class="grow">
-        <input type="text" id="tz" placeholder="Z" class="grow">
+        <input type="text" id="tx" placeholder="X" class="grow" value="500">
+        <input type="text" id="ty" placeholder="Y" class="grow" value="0">
+        <input type="text" id="tz" placeholder="Z" class="grow" value="500">
       </div>
       <div class="row" style="justify-content:center;">
         <button id="calcBtn" class="btn" onclick="getAngles()" disabled>Рассчитать Траекторию</button>
@@ -304,7 +304,7 @@ let state = {
   lastTarget: null,
   lastRangeMap: null,
   lastMaxDist: null,
-  rangeOverlay: false,
+  rangeOverlay: true,
   camSide: { ox:0, oy:0, scale:1, minScale:0.001, maxScale:1000, dragStart:null, initialized:false },
   camTop:  { ox:0, oy:0, scale:1, minScale:0.001, maxScale:1000, dragStart:null, initialized:false }
 };
@@ -1000,6 +1000,10 @@ function init(){
   });
   bindCanvas(el('canvasSide'),state.camSide);
   bindCanvas(el('canvasTop'),state.camTop,true);
+  // Default range overlay button state
+  const rangeBtn = el('rangeToggleBtn');
+  rangeBtn.textContent = state.rangeOverlay ? '🎯 Зона: ВКЛ' : '🎯 Зона: ВЫКЛ';
+  rangeBtn.className = state.rangeOverlay ? 'btn btn-success' : 'btn';
   handleModeSwitch(state.currentMode);
   resizeCanvases();
 }
