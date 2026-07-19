@@ -108,12 +108,38 @@
     .graph-wrap { height: 400px; }
     .results { grid-template-columns: 1fr; }
   }
+  @keyframes pulse-arrow {
+    0%, 100% { transform: translateY(0) scale(1); opacity: 1; }
+    50% { transform: translateY(8px) scale(1.15); opacity: 0.7; }
+  }
+  @keyframes fade-out {
+    0% { opacity: 1; }
+    100% { opacity: 0; pointer-events: none; }
+  }
+  .first-visit-overlay {
+    position: fixed; inset: 0; z-index: 9998;
+    pointer-events: none; display: none;
+  }
+  .first-visit-overlay.active { display: block; }
+  .first-visit-overlay.fade {
+    animation: fade-out 0.8s ease forwards;
+  }
+  .arrow-hint {
+    position: absolute; display: flex; flex-direction: column; align-items: center;
+    animation: pulse-arrow 1.2s ease-in-out infinite;
+  }
+  .arrow-hint svg { filter: drop-shadow(0 0 8px rgba(255,0,0,0.8)); }
+  .arrow-hint-text {
+    color: #ff4d4d; font-weight: 700; font-size: 14px;
+    text-shadow: 0 0 6px rgba(0,0,0,0.9), 0 0 12px rgba(255,0,0,0.5);
+    margin-top: 4px; white-space: nowrap;
+  }
 </style>
 <base target="_blank">
 </head>
 <body>
 <div class="container">
-  <div class="header">CBC Ballistic Computer + Range Map <span style="font-size:13px;font-weight:400;color:#aaccee;margin-left:10px;">by SoKrutoi</span></div>
+  <div class="header">CBC Ballistic Computer + Range Map <a href="https://t.me/sokrutoi" target="_blank" style="font-size:13px;font-weight:400;color:#aaccee;margin-left:10px;text-decoration:none;">by SoKrutoi</a></div>
 
   <div style="background: #1a2332; border: 1px solid #2a4a6f; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
     <span style="font-size: 18px;">📖</span>
@@ -146,6 +172,7 @@
           <button id="btnMortar" class="seg-btn" onclick="setMode('mortar')">Миномёт</button>
         </div>
         <button class="btn" style="margin-left:8px;padding:6px 14px;font-size:13px;" onclick="showMortarExample()" title="Пример миномёта">📷 Пример миномёта</button>
+        <a href="https://github.com/SoKrutoi/CBC-Ballistic-calculator/raw/main/minomet_by_sokrutoi.nbt" download class="btn btn-success" style="margin-left:6px;padding:6px 14px;font-size:13px;text-decoration:none;display:inline-block;" title="Скачать схематику миномёта">⬇️ Схематика миномёта</a>
         <div id="paramsFrame" class="flex" style="margin-left:10px;">
           <select id="projectile">
             <option>HE Shell</option><option>Heavy Shot</option><option>AP Shot</option>
@@ -242,11 +269,11 @@
       <div class="row">
         <label>Углы выстрела:</label>
         <div>
-          <div style="font-size:11px;color:#7cb1f2;">Pitch (вертикальный)</div>
+          <div style="font-size:11px;color:#7cb1f2;">Pitch — Наклон (вертикальный)</div>
           <input type="text" id="cPitch" placeholder="например 43.7" style="width:120px">
         </div>
         <div>
-          <div style="font-size:11px;color:#ffb03a;">Yaw (горизонтальный)</div>
+          <div style="font-size:11px;color:#ffb03a;">Yaw — Поворот (горизонтальный)</div>
           <input type="text" id="cYaw" placeholder="например 90.0" style="width:120px">
         </div>
         <div>
@@ -829,9 +856,9 @@ function getAngles(){
     el('resYaw').textContent=`${round(res.yaw,1)}°`;
     el('resSpeed').textContent=`${res.speed} бл/т`;
     el('resTol').textContent=`±${res.tolerance} бл.`;
-    if(res.low){ el('resLowPitch').textContent=`${round(res.low.pitch,1)}°`; el('resLowTime').textContent=`${res.low.time} сек.`; }
+    if(res.low){ el('resLowPitch').textContent=`Pitch ${round(res.low.pitch,1)}°`; el('resLowTime').textContent=`${res.low.time} сек.`; }
     else { el('resLowPitch').textContent='Недоступно'; el('resLowTime').textContent='—'; }
-    if(res.high){ el('resHighPitch').textContent=`${round(res.high.pitch,1)}°`; el('resHighTime').textContent=`${res.high.time} сек.`; }
+    if(res.high){ el('resHighPitch').textContent=`Pitch ${round(res.high.pitch,1)}°`; el('resHighTime').textContent=`${res.high.time} сек.`; }
     else { el('resHighPitch').textContent='Недоступно'; el('resHighTime').textContent='—'; }
     setStatus(`Траектория построена. Точность ±${res.tolerance} бл.`,'ok');
     saveConfig();
@@ -899,7 +926,7 @@ function updateCalibList(){
   state.calibPoints.forEach((pt,i)=>{
     const row=document.createElement('div'); row.className='calib-item';
     const ms=pt.mode==='mortar'?'Миномёт':'Пушка';
-    let txt=`${i+1}. ${ms} | Pitch:${pt.pitch.toFixed(1)}° | Yaw:${pt.yaw.toFixed(1)}°`;
+    let txt=`${i+1}. ${ms} | Pitch (наклон):${pt.pitch.toFixed(1)}° | Yaw (поворот):${pt.yaw.toFixed(1)}°`;
     if(pt.mode==='cannon') txt+=` | Порох:${pt.power??'-'} | Ствол:${pt.length??'-'}`;
     if(pt.airtime!=null) txt+=` | Время:${pt.airtime.toFixed(1)}с`;
     row.innerHTML=`<span>${txt}</span><button class="btn btn-danger" style="padding:2px 8px;font-size:12px;" onclick="removeCalibPoint(${i})">✕</button>`;
@@ -1006,13 +1033,38 @@ function init(){
   rangeBtn.className = state.rangeOverlay ? 'btn btn-success' : 'btn';
   handleModeSwitch(state.currentMode);
   resizeCanvases();
+  // Auto-calculate default coordinates on first load
+  setTimeout(()=>{ getAngles(); }, 100);
+  // First visit arrow hint
+  const hintShown = localStorage.getItem('cbc_hint_shown');
+  if(!hintShown){
+    const overlay = document.getElementById('firstVisitOverlay');
+    if(overlay){
+      overlay.classList.add('active');
+      setTimeout(()=>{
+        overlay.classList.add('fade');
+        setTimeout(()=>{ overlay.classList.remove('active','fade'); }, 800);
+      }, 10000);
+      localStorage.setItem('cbc_hint_shown','1');
+    }
+  }
 }
 init();
 </script>
 <div style="text-align:center;padding:12px;color:#555;font-size:12px;margin-top:10px;">
-  CBC Ballistic Computer — создано SoKrutoi
+  CBC Ballistic Computer — создано <a href="https://t.me/sokrutoi" target="_blank" style="color:#888;text-decoration:underline;">SoKrutoi</a>
 </div>
 
+
+<!-- Подсказка при первом визите -->
+<div id="firstVisitOverlay" class="first-visit-overlay">
+  <div id="arrowHint" class="arrow-hint" style="top: 195px; left: 50%; transform: translateX(-50%);">
+    <svg width="40" height="50" viewBox="0 0 40 50" fill="none">
+      <path d="M20 0L0 30H12V50H28V30H40L20 0Z" fill="#ff2222" stroke="#fff" stroke-width="2"/>
+    </svg>
+    <div class="arrow-hint-text">Нажми, чтобы увидеть пример!</div>
+  </div>
+</div>
 <!-- Модальное окно: Пример миномёта -->
 <div id="mortarModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;align-items:center;justify-content:center;flex-direction:column;padding:20px;" onclick="hideMortarExample(event)">
   <div style="position:relative;max-width:90vw;max-height:85vh;display:flex;flex-direction:column;align-items:center;" onclick="event.stopPropagation()">
