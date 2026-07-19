@@ -4,7 +4,7 @@
 
 <sup>За основу взят https://github.com/Malex21/CreateBigCannons-BallisticCalculator/</sup>
 
-## Есть html веб версия она даже удобнее, так что лучше использовать её
+## Есть html веб версия она даже удобнее, а пайтон версию мне лень обновлять на равне с веб
 https://sokrutoi.github.io/CBC-Ballistic-calculator/
 
 Пример миномёта
