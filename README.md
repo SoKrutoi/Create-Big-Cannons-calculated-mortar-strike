@@ -4,6 +4,8 @@
 
 <sup>За основу взят https://github.com/Malex21/CreateBigCannons-BallisticCalculator/</sup>
 
+## Есть html веб версия она даже удобнее, так что лучше использовать её
+
 ## Установка
 
 1. Скачайте или клонируйте репозиторий.
