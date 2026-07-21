@@ -1,6 +1,6 @@
 # CBC — Ballistic Calculator
 я слишком тупой чтобы писать самому так что использую Kimi и gemini, если код с недочётами буду рад исправленной версии
-- Требуются моды Create, Create: Big Cannons, C:BC Going Ballistic
+- Требуются моды Create, Create: Big Cannons
 
 Программа для расчёта направления и параметров наведения пушки или миномёта.
 
